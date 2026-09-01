@@ -3,10 +3,10 @@
 A Jenkins + Ansible pattern for deploying a container image across environments
 in a controlled, auditable, staged sequence.
 
-One pipeline run can build an image, push it, and roll it out to DEV, then STAGE,
-then PROD, pausing for human approval between environments. The same pipeline can
-also deploy an *existing* image — by build number, commit hash, or digest — without
-rebuilding anything.
+One pipeline run can build an image, push it, and roll it out to DEV, then STAGE, then
+PROD — stopping at the first environment that fails, so a bad image never reaches the
+next one. The same pipeline can also deploy an *existing* image — by build number, commit
+hash, or digest — without rebuilding anything.
 
 ## Why this exists
 
@@ -30,11 +30,18 @@ Jenkins pipeline
   ├── Push            push all tags to the registry
   ├── Resolve         decide which image reference this run deploys
   ├── Deploy DEV      → Ansible Tower job template → playbook → hosts
-  ├── [approval gate]
   ├── Deploy STAGE    → same template, different hosts
-  ├── [approval gate]
   └── Deploy PROD     → same template, different hosts
 ```
+
+The environments are independent and run in order. A failed deployment fails its stage,
+which stops the run — later environments are never touched. That is the default behaviour
+of a declarative pipeline; it needs no extra machinery, but it does depend on failures
+actually propagating, which is what `throwExceptionWhenFail` (Tower) and a non-zero exit
+(SSH) provide.
+
+Environments are skipped by passing `na` for their hosts, so a run can target one
+environment, two, or all three.
 
 The playbook on each host does four things: pull the requested image, retag it as
 `latest` so consumers pick it up, prune dangling images, and write a digest-stamped

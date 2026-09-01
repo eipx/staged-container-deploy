@@ -165,14 +165,6 @@ pipeline
                     expression { params.stage_hosts != 'na' }
                 }
             }
-            // Gate as a stage directive, not a step: the pipeline waits before
-            // claiming an executor, so an unanswered prompt does not hold an agent.
-            options { timeout(time: 4, unit: 'HOURS') }
-            input
-            {
-                message "DEV deployed. Continue to STAGE?"
-                ok "Deploy STAGE"
-            }
             steps
             {
                 script { deployTo('STAGE', params.stage_hosts) }
@@ -188,12 +180,6 @@ pipeline
                     expression { params.MODE != 'Build only' }
                     expression { params.prod_hosts != 'na' }
                 }
-            }
-            options { timeout(time: 4, unit: 'HOURS') }
-            input
-            {
-                message "STAGE deployed. Continue to PROD?"
-                ok "Deploy PROD"
             }
             steps
             {

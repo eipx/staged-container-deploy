@@ -157,12 +157,6 @@ pipeline
                     expression { params.stage_hosts != 'na' }
                 }
             }
-            options { timeout(time: 4, unit: 'HOURS') }
-            input
-            {
-                message "DEV deployed. Continue to STAGE?"
-                ok "Deploy STAGE"
-            }
             steps
             {
                 script { deployTo('STAGE', params.stage_hosts) }
@@ -178,12 +172,6 @@ pipeline
                     expression { params.MODE != 'Build only' }
                     expression { params.prod_hosts != 'na' }
                 }
-            }
-            options { timeout(time: 4, unit: 'HOURS') }
-            input
-            {
-                message "STAGE deployed. Continue to PROD?"
-                ok "Deploy PROD"
             }
             steps
             {
