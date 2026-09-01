@@ -1,5 +1,6 @@
-// Staged container deployment: build, push, then roll out to DEV -> STAGE -> PROD
-// with an approval gate between environments.
+// Staged container deployment: build, push, then roll out to DEV -> STAGE -> PROD.
+// The environments are independent and ordered; a failed deployment fails its stage,
+// which stops the run before the next environment is touched.
 //
 // Deployment runs through an Ansible Tower job template. The transport lives in
 // deployTo() alone, so swapping it (see Jenkinsfile.ssh) touches nothing else.

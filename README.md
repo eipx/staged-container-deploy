@@ -103,7 +103,7 @@ docs/job-template.md                     Ansible Tower job template configuratio
 ## Two transports
 
 The deployment step is isolated in a single `deployTo()` function so the transport is
-swappable without touching stages, parameters, or gates.
+swappable without touching stages, parameters, or sequencing.
 
 **Ansible Tower** (`Jenkinsfile`) — the pipeline calls a job template, which runs the
 playbook against the target host. Credentials are centrally managed, and Tower keeps
