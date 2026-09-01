@@ -108,6 +108,47 @@ commands inline. No Tower dependency, useful as a starting point or where Tower 
 available. The trade-off is that the deploy key lives in the CI credential store and
 deployment history lives only in build logs, which rotate.
 
+## One registry, or several
+
+The pipeline assumes every environment can pull from the same registry. That is the
+common case, and it keeps the model honest: build once, push once, and every host pulls
+the identical artifact.
+
+Segmented estates often break that assumption — environments sit in different network
+zones, each with its own registry, and a host in one zone has no route to another zone's
+registry. Every deployment involves two hops, and they fail independently:
+
+| Hop | Fails when |
+| --- | --- |
+| CI agent → host | the agent cannot reach that environment's network |
+| host → registry | that environment has no route to the registry holding the image |
+
+A job template fixes the first hop, not the second. If a deployment reports that it cannot
+pull, check the second hop before assuming the transport is at fault — the symptom of a
+missing route looks nothing like a permissions problem, and the playbook will have run
+perfectly up to that point.
+
+Where environments have separate registries, *promote* the image rather than rebuilding
+it — a rebuild produces different bytes and defeats the point of deploying a known
+artifact:
+
+```groovy
+stage( 'Promote to STAGE registry' )
+{
+    when { expression { params.MODE != 'Build only' } }
+    steps
+    {
+        sh "skopeo copy docker://${env.DEPLOY_REF} " +
+           "docker://stage-registry.example.com/example/app:${env.BUILD_ID}"
+    }
+}
+```
+
+Then make the registry per-environment the way credentials already are, and hand the
+promoted reference to `deployTo()`. Verify by digest: a copy is byte-identical, so both
+registries report the same `sha256:`, which is the evidence that nothing changed as the
+image moved between zones.
+
 ## Setup
 
 1. Push the playbook to a repository your Tower instance can read.

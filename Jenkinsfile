@@ -49,6 +49,9 @@ pipeline
 
     environment
     {
+        // Assumes every environment can pull from this registry. Where zones have
+        // separate registries, promote the image between them and make this
+        // per-environment - see "One registry, or several" in the README.
         REGISTRY     = 'registry.example.com'
         NAMESPACE    = 'example'
         IMAGE        = 'app'
