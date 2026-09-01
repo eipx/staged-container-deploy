@@ -5,17 +5,6 @@
 // Deployment runs through an Ansible Tower job template. The transport lives in
 // deployTo() alone, so swapping it (see Jenkinsfile.ssh) touches nothing else.
 
-def credentialForEnvironment( String environmentName )
-{
-    def credentials = [ DEV:   'deploy-machine-cred',
-                        STAGE: 'deploy-machine-cred',
-                        PROD:  'deploy-machine-cred' ]
-
-    def credential = credentials[environmentName]
-    if (!credential) error "No credential mapped for environment '${environmentName}'"
-    return credential
-}
-
 def deployTo( String environmentName, String hostsCsv )
 {
     def hosts = hostsCsv.split(',').collect { it.trim() }
@@ -23,7 +12,12 @@ def deployTo( String environmentName, String hostsCsv )
     {
         echo "Deploying ${env.DEPLOY_REF} on ${host} (${environmentName})"
 
-        ansibleTower credential: credentialForEnvironment(environmentName),
+        // credential is empty: the machine credential is attached to the job
+        // template in Tower, which is where it belongs. Pass a credential name
+        // here only if one template must run with different machine credentials
+        // per environment - that also requires "Prompt on launch: Credentials"
+        // on the template, or Tower silently ignores the value.
+        ansibleTower credential: '',
             inventory: 'app_hosts',
             jobTemplate: 'jt_app_deploy',
             jobType: 'run',
