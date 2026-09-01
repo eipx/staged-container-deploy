@@ -1,0 +1,191 @@
+// Direct-SSH variant of the deployment transport.
+//
+// Identical to Jenkinsfile except for deployTo(), which runs the deployment
+// commands over SSH instead of calling an Ansible Tower job template. Use this
+// where Tower is unavailable, or as a starting point before adopting it.
+//
+// Trade-offs: the deploy key lives in the CI credential store rather than being
+// centrally managed, and deployment history lives only in build logs, which rotate.
+// The on-host audit line (see the logger call below) is the durable record.
+
+def deployTo( String environmentName, String hostsCsv )
+{
+    def hosts = hostsCsv.split(',').collect { it.trim() }
+    for (host in hosts)
+    {
+        echo "Deploying ${env.DEPLOY_REF} on ${host} (${environmentName})"
+
+        withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key',
+                                           keyFileVariable: 'SSH_KEY',
+                                           usernameVariable: 'SSH_USER')])
+        {
+            // $SSH_KEY and $SSH_USER expand in the shell; the rest in Groovy.
+            sh """
+                ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${host} '
+                    sudo docker pull ${env.DEPLOY_REF} &&
+                    sudo docker tag ${env.DEPLOY_REF} ${env.IMAGE_PREFIX}latest &&
+                    sudo docker image prune -f &&
+                    DIGEST=\$(sudo docker inspect --format "{{index .RepoDigests 0}}" ${env.DEPLOY_REF}) &&
+                    logger -t app-deploy "deployed ${env.DEPLOY_REF} (\${DIGEST}) via ${env.BUILD_URL}"
+                '
+            """
+        }
+    }
+}
+
+pipeline
+{
+    agent
+    {
+        label 'docker-builder'
+    }
+
+    environment
+    {
+        REGISTRY     = 'registry.example.com'
+        NAMESPACE    = 'example'
+        IMAGE        = 'app'
+        IMAGE_PREFIX = "${env.REGISTRY}/${env.NAMESPACE}/${env.IMAGE}:"
+    }
+
+    parameters
+    {
+        choice( name: 'MODE',
+                choices: ['Build only', 'Build and deploy', 'Deploy only'],
+                description: 'Build only = build and push a new image; this is what automatic triggers use. Build and deploy = build, push, then roll out. Deploy only = deploy image_ref below without building.' )
+        string( name: 'image_ref',
+                defaultValue: 'latest',
+                description: 'Deploy only: which existing image to deploy - build number, short commit hash, latest, or a sha256:... digest' )
+        string( name: 'dev_hosts',
+                defaultValue: 'na',
+                description: 'Comma separated DEV hosts (na = skip this environment)' )
+        string( name: 'stage_hosts',
+                defaultValue: 'na',
+                description: 'Comma separated STAGE hosts (na = skip this environment)' )
+        string( name: 'prod_hosts',
+                defaultValue: 'na',
+                description: 'Comma separated PROD hosts (na = skip this environment)' )
+    }
+
+    stages
+    {
+        stage( 'Build' )
+        {
+            when { expression { params.MODE != 'Deploy only' } }
+            steps
+            {
+                script
+                {
+                    def shortCommit = env.GIT_COMMIT.take(8)
+
+                    docker.build(
+                        "${env.IMAGE_PREFIX}${env.BUILD_ID}",
+                        "--force-rm=true --pull " +
+                        "--tag=${env.IMAGE_PREFIX}latest " +
+                        "--tag=${env.IMAGE_PREFIX}${shortCommit} " +
+                        "--label org.opencontainers.image.revision=${env.GIT_COMMIT} ."
+                      )
+                }
+            }
+        }
+
+        stage( 'Push' )
+        {
+            when { expression { params.MODE != 'Deploy only' } }
+            steps
+            {
+                script
+                {
+                    def shortCommit = env.GIT_COMMIT.take(8)
+
+                    sh "docker push ${env.IMAGE_PREFIX}${env.BUILD_ID}"
+                    sh "docker push ${env.IMAGE_PREFIX}latest"
+                    sh "docker push ${env.IMAGE_PREFIX}${shortCommit}"
+                }
+            }
+        }
+
+        stage( 'Resolve image reference' )
+        {
+            when { expression { params.MODE != 'Build only' } }
+            steps
+            {
+                script
+                {
+                    if ( params.MODE == 'Deploy only' )
+                    {
+                        env.DEPLOY_REF = params.image_ref.startsWith('sha256:')
+                            ? "${env.REGISTRY}/${env.NAMESPACE}/${env.IMAGE}@${params.image_ref}"
+                            : "${env.IMAGE_PREFIX}${params.image_ref}"
+                    }
+                    else
+                    {
+                        env.DEPLOY_REF = "${env.IMAGE_PREFIX}${env.BUILD_ID}"
+                    }
+
+                    echo "Deploy target: ${env.DEPLOY_REF}"
+                }
+            }
+        }
+
+        stage( 'Deploy to DEV' )
+        {
+            when
+            {
+                allOf
+                {
+                    expression { params.MODE != 'Build only' }
+                    expression { params.dev_hosts != 'na' }
+                }
+            }
+            steps
+            {
+                script { deployTo('DEV', params.dev_hosts) }
+            }
+        }
+
+        stage( 'Deploy to STAGE' )
+        {
+            when
+            {
+                allOf
+                {
+                    expression { params.MODE != 'Build only' }
+                    expression { params.stage_hosts != 'na' }
+                }
+            }
+            options { timeout(time: 4, unit: 'HOURS') }
+            input
+            {
+                message "DEV deployed. Continue to STAGE?"
+                ok "Deploy STAGE"
+            }
+            steps
+            {
+                script { deployTo('STAGE', params.stage_hosts) }
+            }
+        }
+
+        stage( 'Deploy to PROD' )
+        {
+            when
+            {
+                allOf
+                {
+                    expression { params.MODE != 'Build only' }
+                    expression { params.prod_hosts != 'na' }
+                }
+            }
+            options { timeout(time: 4, unit: 'HOURS') }
+            input
+            {
+                message "STAGE deployed. Continue to PROD?"
+                ok "Deploy PROD"
+            }
+            steps
+            {
+                script { deployTo('PROD', params.prod_hosts) }
+            }
+        }
+    }
+}

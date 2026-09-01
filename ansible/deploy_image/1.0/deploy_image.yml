@@ -1,0 +1,60 @@
+---
+# Deploys a container image to a host:
+#   pull -> retag as latest -> prune dangling images -> record the deployment.
+#
+# Targeting comes from the caller (the job template's limit), not from this file,
+# so the same playbook serves every environment.
+#
+# Required extra vars:
+#   deploy_ref   full image reference to deploy, either
+#                registry.example.com/example/app:142  (tag)
+#                registry.example.com/example/app@sha256:...  (digest)
+#   latest_ref   the moving reference consumers pull, e.g.
+#                registry.example.com/example/app:latest
+#
+# Optional extra vars:
+#   build_url    CI build URL, recorded in the host's audit log line
+
+- hosts: all
+  become: yes
+
+  tasks:
+    - name: Pull {{ deploy_ref }}
+      command: docker pull {{ deploy_ref }}
+      register: pull_result
+      changed_when: "'Image is up to date' not in pull_result.stdout"
+
+    # Consumers pull the moving reference, so this is what makes the deploy visible.
+    - name: Retag as {{ latest_ref }}
+      command: docker tag {{ deploy_ref }} {{ latest_ref }}
+      when: deploy_ref != latest_ref
+
+    - name: Remove dangling images
+      command: docker image prune -f
+      register: prune_result
+      changed_when: "'Total reclaimed space: 0B' not in prune_result.stdout"
+
+    # {% raw %} protects the Go template braces from Jinja2.
+    - name: Read the deployed image digest
+      command: docker inspect --format {% raw %}"{{index .RepoDigests 0}}"{% endraw %} {{ deploy_ref }}
+      register: digest_result
+      changed_when: false
+
+    # Container tooling records build time, never deploy time. This line is the
+    # host's own durable record of what was deployed, when, and by which build.
+    - name: Record the deployment in the system log
+      command: >-
+        logger -t app-deploy "deployed {{ deploy_ref }} ({{ digest_result.stdout }})
+        via {{ build_url | default('ansible job ' ~ (awx_job_id | default('manual'))) }}"
+      changed_when: false
+
+    # Enable where the hosts do not already hold registry credentials. Supply
+    # registry_user and registry_password from a vaulted or externally managed
+    # credential, never as plain extra vars.
+    #
+    # - name: Log in to the registry
+    #   community.docker.docker_login:
+    #     registry_url: "{{ registry_url }}"
+    #     username: "{{ registry_user }}"
+    #     password: "{{ registry_password }}"
+    #   no_log: true
